@@ -1,5 +1,20 @@
+import copy
 from typing import List, Optional, Tuple, Dict, Any
 from pieces import Piece, Pawn, Rook, Knight, Bishop, Queen, King
+
+
+class CastleRights:
+    """
+    Stores the castling rights for both players.
+    True means the player still has the right to castle on that side.
+    False means the right is lost forever (King moved, Rook moved, or Rook captured).
+    """
+    def __init__(self, wks: bool, bks: bool, wqs: bool, bqs: bool):
+        self.wks = wks  # White King-Side
+        self.bks = bks  # Black King-Side
+        self.wqs = wqs  # White Queen-Side
+        self.bqs = bqs  # Black Queen-Side
+
 
 class GameState:
     """
@@ -27,6 +42,63 @@ class GameState:
         # Stores the coordinates of a square where an En Passant capture can happen.
         # It is empty '()' by default, but gets updated when a pawn jumps two squares forward.
         self.en_passant_possible = ()
+
+        # Current status of castling rights for the actual board
+        self.current_castling_right = CastleRights(True, True, True, True)
+        
+        # History of castling rights, needed to restore them exactly when a move is undone
+        self.castle_rights_log = [CastleRights(self.current_castling_right.wks, self.current_castling_right.bks,
+                                               self.current_castling_right.wqs, self.current_castling_right.bqs)]
+
+    def _update_castle_rights(self, piece_moved: Piece, piece_captured: Optional[Piece], start_col: int, end_col: int) -> None:
+        """
+        Updates the castling rights boolean values based on moves and captures.
+        Rights are lost if the King moves, a Rook moves, or a Rook is captured.
+        """
+        if str(piece_moved) == 'wK':
+            self.current_castling_right.wks = False
+            self.current_castling_right.wqs = False
+        elif str(piece_moved) == 'bK':
+            self.current_castling_right.bks = False
+            self.current_castling_right.bqs = False
+            
+        elif str(piece_moved) == 'wR':
+            if start_col == 0:
+                self.current_castling_right.wqs = False
+            elif start_col == 7:
+                self.current_castling_right.wks = False
+        elif str(piece_moved) == 'bR':
+            if start_col == 0:
+                self.current_castling_right.bqs = False
+            elif start_col == 7:
+                self.current_castling_right.bks = False
+
+        if piece_captured is not None:
+            if str(piece_captured) == 'wR':
+                if end_col == 0:
+                    self.current_castling_right.wqs = False
+                elif end_col == 7:
+                    self.current_castling_right.wks = False
+            elif str(piece_captured) == 'bR':
+                if end_col == 0:
+                    self.current_castling_right.bqs = False
+                elif end_col == 7:
+                    self.current_castling_right.bks = False
+
+    def _get_castle_moves(self, row: int, col: int, valid_moves: list, color: str) -> None:
+        """
+        Checks if castling is legally possible right now, and if so, adds the 2-square jumps to 'valid_moves'.
+        Checks for empty squares and ensures the King does not jump through or into check.
+        """
+        if (color == 'w' and self.current_castling_right.wks) or (color == 'b' and self.current_castling_right.bks):
+            if self.board[row][col + 1] is None and self.board[row][col + 2] is None:
+                if not self.square_under_attack(row, col + 1) and not self.square_under_attack(row, col + 2):
+                    valid_moves.append((row, col + 2))
+                    
+        if (color == 'w' and self.current_castling_right.wqs) or (color == 'b' and self.current_castling_right.bqs):
+            if self.board[row][col - 1] is None and self.board[row][col - 2] is None and self.board[row][col - 3] is None:
+                if not self.square_under_attack(row, col - 1) and not self.square_under_attack(row, col - 2):
+                    valid_moves.append((row, col - 2))
 
     def _setup_board(self) -> List[List[Optional[Piece]]]:
         """
@@ -74,6 +146,9 @@ class GameState:
                 # Remove the enemy pawn from the board manually
                 self.board[start_row][end_col] = None
             
+            # We know it's a castle move if the King jumps exactly 2 columns left or right
+            is_castle_move = (str(piece_moved)[1] == 'K' and abs(start_col - end_col) == 2)
+
             # --- 1. UPDATE THE BOARD MATRIX ---
             # Move the piece from the old square to the new square
             self.board[start_row][start_col] = None
@@ -94,6 +169,19 @@ class GameState:
                 elif promotion_choice == 'N':
                     self.board[end_row][end_col] = Knight(piece_moved.color, end_row, end_col)
 
+
+            # Move the Rook automatically if the King performed a castling move
+            if is_castle_move:
+                if end_col - start_col == 2: # King-side castle
+                    self.board[end_row][end_col - 1] = self.board[end_row][end_col + 1]
+                    self.board[end_row][end_col + 1] = None
+                    self.board[end_row][end_col - 1].move(end_row, end_col - 1)
+                else: # Queen-side castle
+                    self.board[end_row][end_col + 1] = self.board[end_row][end_col - 2]
+                    self.board[end_row][end_col - 2] = None
+                    self.board[end_row][end_col + 1].move(end_row, end_col + 1)
+
+
             # --- 2. UPDATE PIECE COORDINATES ---
             # Tell the piece object its new location so it can calculate future moves correctly
             piece_moved.move(end_row, end_col)
@@ -110,6 +198,12 @@ class GameState:
             else:
                 # If any other move is made, the right to capture En Passant is immediately lost.
                 self.en_passant_possible = ()
+
+            # Update the rights based on the piece that just moved or got captured
+            self._update_castle_rights(piece_moved, piece_captured, start_col, end_col)
+            # Save the newly calculated rights into our history stack
+            self.castle_rights_log.append(CastleRights(self.current_castling_right.wks, self.current_castling_right.bks,
+                                                       self.current_castling_right.wqs, self.current_castling_right.bqs))
             
             # --- 3. SAVE TO MEMORY ---
             # Pack all information about this move into a dictionary and add it to our history stack
@@ -120,7 +214,8 @@ class GameState:
                 'piece_captured': piece_captured,
                 'is_promotion': is_promotion,
                 'is_enpassant_move': is_enpassant_move,
-                'en_passant_possible': en_passant_log
+                'en_passant_possible': en_passant_log,
+                'is_castle_move': is_castle_move
             })
             
             # --- 4. PASS THE TURN ---
@@ -160,6 +255,8 @@ class GameState:
             # Put the captured piece (if any) back to the square where the move ended
             self.board[end_row][end_col] = piece_captured
 
+            is_castle_move = last_move.get('is_castle_move', False)
+
             # --- UNDO EN PASSANT EXCEPTION ---
             if last_move.get('is_enpassant_move', False):
                 # In En Passant, the target square was actually empty, so make it empty again
@@ -167,8 +264,25 @@ class GameState:
                 # And put the captured enemy pawn back beside our pawn
                 self.board[start_row][end_col] = piece_captured 
                 
+
+            # Put the Rook back to its original corner if the move was a castle
+            if is_castle_move:
+                if end_col - start_col == 2: # King-side
+                    self.board[end_row][end_col + 1] = self.board[end_row][end_col - 1]
+                    self.board[end_row][end_col - 1] = None
+                    self.board[end_row][end_col + 1].move(end_row, end_col + 1)
+                else: # Queen-side
+                    self.board[end_row][end_col - 2] = self.board[end_row][end_col + 1]
+                    self.board[end_row][end_col + 1] = None
+                    self.board[end_row][end_col - 2].move(end_row, end_col - 2)
+
             # --- 2. RESTORE PIECE COORDINATES ---
             piece_moved.move(start_row, start_col)
+
+            # Remove the last saved rights and restore the previous state from the history stack
+            self.castle_rights_log.pop()
+            last_rights = self.castle_rights_log[-1]
+            self.current_castling_right = CastleRights(last_rights.wks, last_rights.bks, last_rights.wqs, last_rights.bqs)
             
             # --- 3. REVERT THE TURN ---
             self.white_to_move = not self.white_to_move
@@ -221,6 +335,11 @@ class GameState:
                 # 4. Give the turn back to the enemy and undo the simulated move to restore the board
                 self.white_to_move = not self.white_to_move
                 self.undo_move()
+
+
+            # Castling is a special move because it's only valid if we are NOT currently in Check
+            if str(piece)[1] == 'K' and not self.in_check():
+                self._get_castle_moves(row, col, valid_moves, piece.color)
                 
             return valid_moves
             

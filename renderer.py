@@ -36,18 +36,18 @@ class Renderer:
                 print(f"Error: Could not find image at {image_path}")
                 sys.exit(1)
 
-    def draw_game_state(self, screen: p.Surface, gs: GameState, sq_selected: tuple, valid_moves: list) -> None:
+    def draw_game_state(self, screen: p.Surface, gs: GameState, sq_selected: tuple, valid_moves: list, flipped: bool = False) -> None:
         """
         The master drawing method called every single frame in the main game loop.
         The order of calling these methods is CRITICAL! 
         We must draw the board first, then highlights, and finally the pieces on top.
         """
-        self._draw_board(screen)
-        self._draw_highlights(screen, gs, sq_selected)
-        self._draw_valid_moves(screen, valid_moves, gs.board) 
-        self._draw_pieces(screen, gs.board)
+        self._draw_board(screen, flipped)
+        self._draw_highlights(screen, gs, sq_selected, flipped)
+        self._draw_valid_moves(screen, valid_moves, gs.board, flipped) 
+        self._draw_pieces(screen, gs.board, flipped)
 
-    def _draw_board(self, screen: p.Surface) -> None:
+    def _draw_board(self, screen: p.Surface, flipped: bool) -> None:
         """
         Draws the 8x8 checkerboard background.
         """
@@ -60,13 +60,16 @@ class Renderer:
                 # Create a rectangle and draw it on the screen
                 p.draw.rect(screen, color, p.Rect(col * c.SQ_SIZE, row * c.SQ_SIZE, c.SQ_SIZE, c.SQ_SIZE))
 
-    def _draw_highlights(self, screen: p.Surface, gs: GameState, sq_selected: tuple) -> None:
+    def _draw_highlights(self, screen: p.Surface, gs: GameState, sq_selected: tuple, flipped: bool) -> None:
         """
         Draws a colored border around the square the player just clicked.
         """
         if sq_selected != ():
             row, col = sq_selected
             
+            # Convert logical board coordinates to visual screen coordinates
+            display_r, display_col = (7 - row, 7 - col) if flipped else (row, col)
+
             # Make sure we only highlight squares that actually have a piece belonging to the current player
             piece = gs.board[row][col]
             if piece is not None and (
@@ -79,9 +82,9 @@ class Renderer:
                 highlight.fill(p.Color('yellow'))
                 
                 # Draw the yellow highlight directly on top of the selected square
-                screen.blit(highlight, (col * c.SQ_SIZE, row * c.SQ_SIZE))
+                screen.blit(highlight, (display_col * c.SQ_SIZE, display_r * c.SQ_SIZE))
 
-    def _draw_valid_moves(self, screen: p.Surface, valid_moves: list, board: List[List[Optional[Piece]]]) -> None:
+    def _draw_valid_moves(self, screen: p.Surface, valid_moves: list, board: List[List[Optional[Piece]]], flipped: bool) -> None:
         """
         Draws indicators showing where the currently selected piece can legally move.
         Draws a small green dot for empty squares, and a red circle for capture squares.
@@ -89,9 +92,11 @@ class Renderer:
         for move in valid_moves:
             row, col = move
             
+            display_r, display_col = (7 - row, 7 - col) if flipped else (row, col)
+
             # Find the exact center pixel of the target square to draw our circle
-            center_x = col * c.SQ_SIZE + c.SQ_SIZE // 2
-            center_y = row * c.SQ_SIZE + c.SQ_SIZE // 2
+            center_x = display_col * c.SQ_SIZE + c.SQ_SIZE // 2
+            center_y = display_r * c.SQ_SIZE + c.SQ_SIZE // 2
             
             # If there is a piece on the destination square (it must be an enemy, as own pieces are filtered out)
             if board[row][col] is not None:
@@ -103,16 +108,18 @@ class Renderer:
                 radius = c.SQ_SIZE // 6
                 p.draw.circle(screen, p.Color('darkgreen'), (center_x, center_y), radius)
 
-    def _draw_pieces(self, screen: p.Surface, board: List[List[Optional[Piece]]]) -> None:
+    def _draw_pieces(self, screen: p.Surface, board: List[List[Optional[Piece]]], flipped: bool) -> None:
         """
         Looks at the engine's board matrix and draws the corresponding pre-loaded images.
         """
         for row in range(c.DIMENSION):
             for col in range(c.DIMENSION):
+                # Calculate which piece to show based on flip status
+                display_row, display_col = (7 - row, 7 - col) if flipped else (row, col)
                 piece = board[row][col]
                 if piece is not None:
                     # 'blit' means copy pixels from one image to another (draws piece onto screen)
-                    screen.blit(self.images[str(piece)], p.Rect(col * c.SQ_SIZE, row * c.SQ_SIZE, c.SQ_SIZE, c.SQ_SIZE))
+                    screen.blit(self.images[str(piece)], p.Rect(display_col * c.SQ_SIZE, display_row * c.SQ_SIZE, c.SQ_SIZE, c.SQ_SIZE))
 
     def draw_promotion_menu(self, screen: p.Surface, color: str) -> None:
         """
@@ -148,3 +155,88 @@ class Renderer:
             # Draw a black line between the icons for neatness
             if i > 0:
                 p.draw.line(screen, p.Color('black'), (icon_x, start_y), (icon_x, start_y + c.SQ_SIZE), 2)
+
+
+    def draw_main_menu(self, screen: p.Surface) -> tuple:
+        """
+        Draws the main menu with a title and buttons.
+        Returns rectangles for PvP, PvE, and Quit buttons for collision detection.
+        """
+        # Fill the background with a solid color to hide the chessboard
+        screen.fill(p.Color('dim gray'))
+
+        # Set up fonts for the title and the buttons
+        font_title = p.font.SysFont("Helvetica", 60, True, False)
+        font_button = p.font.SysFont("Helvetica", 30, False, False)
+
+        # Render and position the main title text
+        text_title = font_title.render("CHESS", True, p.Color('white'))
+        title_rect = p.Rect(0, 0, text_title.get_width(), text_title.get_height())
+        title_rect.center = (c.WIDTH // 2, c.HEIGHT // 4)
+        screen.blit(text_title, title_rect)
+
+        # Render the 'Player vs Player' button background and text
+        pvp_text = font_button.render("Player vs Player", True, p.Color('black'))
+        pvp_btn = p.Rect(0, 0, 250, 50)
+        pvp_btn.center = (c.WIDTH // 2, c.HEIGHT // 2)
+        p.draw.rect(screen, p.Color('light gray'), pvp_btn, border_radius=10)
+        screen.blit(pvp_text, (pvp_btn.centerx - pvp_text.get_width() // 2, pvp_btn.centery - pvp_text.get_height() // 2))
+
+        # Render the 'Player vs AI' button background and text
+        pve_text = font_button.render("Player vs AI", True, p.Color('black'))
+        pve_btn = p.Rect(0, 0, 250, 50)
+        pve_btn.center = (c.WIDTH // 2, c.HEIGHT // 2 + 70)
+        p.draw.rect(screen, p.Color('light gray'), pve_btn, border_radius=10)
+        screen.blit(pve_text, (pve_btn.centerx - pve_text.get_width() // 2, pve_btn.centery - pve_text.get_height() // 2))
+
+        # Render the 'Quit' button to exit the application completely
+        quit_text = font_button.render("Quit", True, p.Color('black'))
+        quit_btn = p.Rect(0, 0, 250, 50)
+        quit_btn.center = (c.WIDTH // 2, c.HEIGHT // 2 + 140)
+        p.draw.rect(screen, p.Color('light gray'), quit_btn, border_radius=10)
+        screen.blit(quit_text, (quit_btn.centerx - quit_text.get_width() // 2, quit_btn.centery - quit_text.get_height() // 2))
+
+        # Return the clickable areas so the controller knows where the user clicked
+        return pvp_btn, pve_btn, quit_btn
+
+    def draw_color_menu(self, screen: p.Surface) -> tuple:
+        """
+        Draws the color selection menu for PvE mode.
+        Returns rectangles for Play as White, Play as Black, and Back buttons.
+        """
+        # Clear the screen for the sub-menu
+        screen.fill(p.Color('dim gray'))
+
+        # Prepare fonts for this specific screen
+        font_title = p.font.SysFont("Helvetica", 50, True, False)
+        font_button = p.font.SysFont("Helvetica", 30, False, False)
+
+        # Render and center the screen title
+        text_title = font_title.render("Choose Color", True, p.Color('white'))
+        title_rect = p.Rect(0, 0, text_title.get_width(), text_title.get_height())
+        title_rect.center = (c.WIDTH // 2, c.HEIGHT // 4)
+        screen.blit(text_title, title_rect)
+
+        # Button for playing as White: white background, black text
+        white_text = font_button.render("Play as White", True, p.Color('black'))
+        white_btn = p.Rect(0, 0, 250, 50)
+        white_btn.center = (c.WIDTH // 2, c.HEIGHT // 2)
+        p.draw.rect(screen, p.Color('white'), white_btn, border_radius=10)
+        screen.blit(white_text, (white_btn.centerx - white_text.get_width() // 2, white_btn.centery - white_text.get_height() // 2))
+
+        # Button for playing as Black: black background, white text and border
+        black_text = font_button.render("Play as Black", True, p.Color('white'))
+        black_btn = p.Rect(0, 0, 250, 50)
+        black_btn.center = (c.WIDTH // 2, c.HEIGHT // 2 + 70)
+        p.draw.rect(screen, p.Color('black'), black_btn, border_radius=10)
+        p.draw.rect(screen, p.Color('white'), black_btn, border_radius=10, width=2)
+        screen.blit(black_text, (black_btn.centerx - black_text.get_width() // 2, black_btn.centery - black_text.get_height() // 2))
+
+        # Navigation button to return to the main menu without starting a game
+        back_text = font_button.render("Back to Menu", True, p.Color('black'))
+        back_btn = p.Rect(0, 0, 250, 50)
+        back_btn.center = (c.WIDTH // 2, c.HEIGHT // 2 + 140)
+        p.draw.rect(screen, p.Color('light gray'), back_btn, border_radius=10)
+        screen.blit(back_text, (back_btn.centerx - back_text.get_width() // 2, back_btn.centery - back_text.get_height() // 2))
+
+        return white_btn, black_btn, back_btn

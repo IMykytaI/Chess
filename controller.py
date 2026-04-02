@@ -31,7 +31,7 @@ class InputHandler:
         # We need this because we have to wait for the player's menu choice before finishing the move.
         self.promotion_move = None
 
-    def handle_mouse_click(self, location: tuple, gs: GameState) -> None:
+    def handle_mouse_click(self, location: tuple, gs: GameState, flipped: bool = False) -> None:
         """
         Triggered every time the left mouse button is pressed.
         'location' is the exact (x, y) pixel coordinate of the mouse on the screen.
@@ -66,6 +66,11 @@ class InputHandler:
         col = location[0] // c.SQ_SIZE
         row = location[1] // c.SQ_SIZE
         
+        # If the view is flipped, the logical row/col is (7 - screen_row/col)
+        if flipped:
+            row = 7 - row
+            col = 7 - col
+            
         # If the player clicks the exact same square twice, they probably want to deselect their piece
         if self.sq_selected == (row, col):
             self.reset_clicks()
