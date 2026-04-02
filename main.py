@@ -1,74 +1,22 @@
 import pygame as p
-import sys
-from typing import Dict
-
-import practice11.Chess.constants as c
-from practice11.Chess.engine import GameState
-
-# Global dictionary to store images. 
-# We load them only once to optimize performance.
-IMAGES: Dict[str, p.Surface] = {}
-
-def load_images() -> None:
-    """
-    Initialize a global directory of images.
-    This will be called exactly once in the main.
-    Expects images in an 'images' folder (e.g., 'images/wP.png').
-    """
-    pieces = ['wP', 'wR', 'wN', 'wB', 'wK', 'wQ', 'bP', 'bR', 'bN', 'bB', 'bK', 'bQ']
-    for piece in pieces:
-        # Load the image and scale it to fit the square size
-        image_path = f"images/{piece}.png"
-        try:
-            image = p.image.load(image_path)
-            IMAGES[piece] = p.transform.scale(image, (c.SQ_SIZE, c.SQ_SIZE))
-        except FileNotFoundError:
-            print(f"Error: Could not find image at {image_path}")
-            sys.exit(1)
-
-def draw_game_state(screen: p.Surface, gs: GameState) -> None:
-    """
-    Responsible for all the graphics within a current game state.
-    """
-    draw_board(screen)
-    draw_pieces(screen, gs.board)
-
-def draw_board(screen: p.Surface) -> None:
-    """
-    Draw the squares on the board.
-    The top left square is always light.
-    """
-    colors = [c.WHITE_SQUARE, c.BLACK_SQUARE]
-    for row in range(c.DIMENSION):
-        for col in range(c.DIMENSION):
-            # If row + col is even, it's a light square. If odd, it's dark.
-            color = colors[((row + col) % 2)]
-            p.draw.rect(screen, color, p.Rect(col * c.SQ_SIZE, row * c.SQ_SIZE, c.SQ_SIZE, c.SQ_SIZE))
-
-def draw_pieces(screen: p.Surface, board: list) -> None:
-    """
-    Draw the pieces on the board using the current GameState.board.
-    """
-    for row in range(c.DIMENSION):
-        for col in range(c.DIMENSION):
-            piece = board[row][col]
-            if piece is not None:
-                # Use the piece's string representation (e.g., 'wP') to get the image
-                screen.blit(IMAGES[str(piece)], p.Rect(col * c.SQ_SIZE, row * c.SQ_SIZE, c.SQ_SIZE, c.SQ_SIZE))
+import constants as c
+from engine import GameState
+from controller import InputHandler
+from renderer import Renderer
 
 def main() -> None:
     """
-    The main driver for our code. 
-    This will handle user input and updating the graphics.
+    Main driver running the game loop. Coordinates Model, View, and Controller.
     """
     p.init()
     screen = p.display.set_mode((c.WIDTH, c.HEIGHT))
-    p.display.set_caption("Chess Project - AI & Player")
+    p.display.set_caption("Chess Project - MVC Architecture")
     clock = p.time.Clock()
-    screen.fill(p.Color("white"))
     
-    gs = GameState()
-    load_images()
+    # Initialize our MVC components
+    gs = GameState()            # Model
+    input_handler = InputHandler() # Controller
+    renderer = Renderer()       # View
     
     running = True
     while running:
@@ -76,7 +24,24 @@ def main() -> None:
             if event.type == p.QUIT:
                 running = False
                 
-        draw_game_state(screen, gs)
+            elif event.type == p.MOUSEBUTTONDOWN:
+                location = p.mouse.get_pos()
+                input_handler.handle_mouse_click(location, gs)
+                
+            # ДОДАЄМО ОБРОБКУ КЛАВІАТУРИ ТУТ
+            elif event.type == p.KEYDOWN:
+                if event.key == p.K_z:  # Undo when 'Z' is pressed
+                    gs.undo_move()
+                    input_handler.reset_clicks()
+                    print(f"Відміна ходу! Зараз хід білих? -> {gs.white_to_move}")
+
+        # Draw current state and update display
+        renderer.draw_game_state(screen, gs, input_handler.sq_selected, input_handler.valid_moves)
+        if input_handler.is_promoting:
+            start_row, start_col = input_handler.promotion_move[0]
+            piece_color = gs.board[start_row][start_col].color
+            renderer.draw_promotion_menu(screen, piece_color)
+        
         clock.tick(c.MAX_FPS)
         p.display.flip()
         
