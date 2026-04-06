@@ -49,77 +49,88 @@ class GameState:
         # History of castling rights, needed to restore them exactly when a move is undone
         self.castle_rights_log = [CastleRights(self.current_castling_right.wks, self.current_castling_right.bks,
                                                self.current_castling_right.wqs, self.current_castling_right.bqs)]
-
-    def _update_castle_rights(self, piece_moved: Piece, piece_captured: Optional[Piece], start_col: int, end_col: int) -> None:
-        """
-        Updates the castling rights boolean values based on moves and captures.
-        Rights are lost if the King moves, a Rook moves, or a Rook is captured.
-        """
-        if str(piece_moved) == 'wK':
-            self.current_castling_right.wks = False
-            self.current_castling_right.wqs = False
-        elif str(piece_moved) == 'bK':
-            self.current_castling_right.bks = False
-            self.current_castling_right.bqs = False
-            
-        elif str(piece_moved) == 'wR':
-            if start_col == 0:
-                self.current_castling_right.wqs = False
-            elif start_col == 7:
-                self.current_castling_right.wks = False
-        elif str(piece_moved) == 'bR':
-            if start_col == 0:
-                self.current_castling_right.bqs = False
-            elif start_col == 7:
-                self.current_castling_right.bks = False
-
-        if piece_captured is not None:
-            if str(piece_captured) == 'wR':
-                if end_col == 0:
-                    self.current_castling_right.wqs = False
-                elif end_col == 7:
-                    self.current_castling_right.wks = False
-            elif str(piece_captured) == 'bR':
-                if end_col == 0:
-                    self.current_castling_right.bqs = False
-                elif end_col == 7:
-                    self.current_castling_right.bks = False
-
-    def _get_castle_moves(self, row: int, col: int, valid_moves: list, color: str) -> None:
-        """
-        Checks if castling is legally possible right now, and if so, adds the 2-square jumps to 'valid_moves'.
-        Checks for empty squares and ensures the King does not jump through or into check.
-        """
-        if (color == 'w' and self.current_castling_right.wks) or (color == 'b' and self.current_castling_right.bks):
-            if self.board[row][col + 1] is None and self.board[row][col + 2] is None:
-                if not self.square_under_attack(row, col + 1) and not self.square_under_attack(row, col + 2):
-                    valid_moves.append((row, col + 2))
-                    
-        if (color == 'w' and self.current_castling_right.wqs) or (color == 'b' and self.current_castling_right.bqs):
-            if self.board[row][col - 1] is None and self.board[row][col - 2] is None and self.board[row][col - 3] is None:
-                if not self.square_under_attack(row, col - 1) and not self.square_under_attack(row, col - 2):
-                    valid_moves.append((row, col - 2))
-
-    def _setup_board(self) -> List[List[Optional[Piece]]]:
-        """
-        Initializes the board with Piece objects in their starting positions.
-        """
-        # Create an empty 8x8 matrix filled with 'None'
-        board: List[List[Optional[Piece]]] = [[None for _ in range(8)] for _ in range(8)]
         
-        # Place Pawns on the 2nd row (index 1 for black) and 7th row (index 6 for white)
-        for col in range(8):
-            board[1][col] = Pawn('b', 1, col)
-            board[6][col] = Pawn('w', 6, col)
+        # --- NEW: Game ending flags ---
+        self.checkmate: bool = False
+        self.stalemate: bool = False
 
-        # Place the main pieces dynamically using a list of classes
-        piece_order = [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook]
-        for col in range(8):
-            piece_class = piece_order[col]
-            board[0][col] = piece_class('b', 0, col)
-            board[7][col] = piece_class('w', 7, col)
+    def update_game_status(self) -> None:
+        """
+        Scans the board to see if the current player has any valid moves left across all their pieces.
+        Updates the checkmate and stalemate flags accordingly.
+        """
+        has_valid_moves = False
+        for r in range(8):
+            for c in range(8):
+                piece = self.board[r][c]
+                if piece is not None:
+                    # Check pieces belonging to the player whose turn it currently is
+                    if (piece.color == 'w' and self.white_to_move) or (piece.color == 'b' and not self.white_to_move):
+                        # If even a single piece has at least one valid move, the game continues
+                        if len(self.get_valid_moves_for_piece(r, c)) > 0:
+                            has_valid_moves = True
+                            break
+            if has_valid_moves:
+                break
+                
+        # If we checked every piece and found absolutely zero valid moves
+        if not has_valid_moves:
+            if self.in_check():
+                self.checkmate = True
+            else:
+                self.stalemate = True
+        else:
+            self.checkmate = False
+            self.stalemate = False
 
-        return board
+    def get_valid_moves_for_piece(self, row: int, col: int) -> list:
+        """
+        Returns strictly legal moves for a specific piece.
+        Unlike 'get_all_possible_moves', this method guarantees that making the move 
+        will not leave your own king under attack (Check).
+        """
+        piece = self.board[row][col]
+        # If the player clicked an empty square, return an empty list
+        if piece is None:
+            return []
+            
+        # Ensure we only calculate moves for the player whose turn it currently is
+        if (piece.color == 'w' and self.white_to_move) or (piece.color == 'b' and not self.white_to_move):
+            
+            # Ask the piece object where it CAN go based on its movement rules (ignoring the king's safety for now)
+            # IMPORTANT: Pawns need to know if there is an En Passant target available, other pieces don't care.
+            if str(piece)[1] == 'P':
+                pseudo_moves = piece.get_possible_moves(self.board, self.en_passant_possible)
+            else:
+                pseudo_moves = piece.get_possible_moves(self.board)
+
+            valid_moves = []
+            
+            # Now we test every single generated move in our imagination
+            for end_pos in pseudo_moves:
+                # 1. Simulate the move on the real board
+                self.make_move((row, col), end_pos)
+                
+                # 2. 'make_move' automatically gave the turn to the enemy. 
+                # We switch it back temporarily because we want to check our OWN king.
+                self.white_to_move = not self.white_to_move
+                
+                # 3. Check if our king is under attack after this simulated move
+                if not self.in_check():
+                    # If the king is safe, this move is 100% legal! Add it to the final list.
+                    valid_moves.append(end_pos)
+                    
+                # 4. Give the turn back to the enemy and undo the simulated move to restore the board
+                self.white_to_move = not self.white_to_move
+                self.undo_move()
+
+
+            # Castling is a special move because it's only valid if we are NOT currently in Check
+            if str(piece)[1] == 'K' and not self.in_check():
+                self._get_castle_moves(row, col, valid_moves, piece.color)
+            return valid_moves
+            
+        return []
 
     def make_move(self, start_pos: tuple, end_pos: tuple, promotion_choice: str = 'Q') -> None:
         """
@@ -295,56 +306,6 @@ class GameState:
                 else:
                     self.black_king_location = (start_row, start_col)
 
-    def get_valid_moves_for_piece(self, row: int, col: int) -> list:
-        """
-        Returns strictly legal moves for a specific piece.
-        Unlike 'get_all_possible_moves', this method guarantees that making the move 
-        will not leave your own king under attack (Check).
-        """
-        piece = self.board[row][col]
-        # If the player clicked an empty square, return an empty list
-        if piece is None:
-            return []
-            
-        # Ensure we only calculate moves for the player whose turn it currently is
-        if (piece.color == 'w' and self.white_to_move) or (piece.color == 'b' and not self.white_to_move):
-            
-            # Ask the piece object where it CAN go based on its movement rules (ignoring the king's safety for now)
-            # IMPORTANT: Pawns need to know if there is an En Passant target available, other pieces don't care.
-            if str(piece)[1] == 'P':
-                pseudo_moves = piece.get_possible_moves(self.board, self.en_passant_possible)
-            else:
-                pseudo_moves = piece.get_possible_moves(self.board)
-
-            valid_moves = []
-            
-            # Now we test every single generated move in our imagination
-            for end_pos in pseudo_moves:
-                # 1. Simulate the move on the real board
-                self.make_move((row, col), end_pos)
-                
-                # 2. 'make_move' automatically gave the turn to the enemy. 
-                # We switch it back temporarily because we want to check our OWN king.
-                self.white_to_move = not self.white_to_move
-                
-                # 3. Check if our king is under attack after this simulated move
-                if not self.in_check():
-                    # If the king is safe, this move is 100% legal! Add it to the final list.
-                    valid_moves.append(end_pos)
-                    
-                # 4. Give the turn back to the enemy and undo the simulated move to restore the board
-                self.white_to_move = not self.white_to_move
-                self.undo_move()
-
-
-            # Castling is a special move because it's only valid if we are NOT currently in Check
-            if str(piece)[1] == 'K' and not self.in_check():
-                self._get_castle_moves(row, col, valid_moves, piece.color)
-                
-            return valid_moves
-            
-        return []
-    
     def get_all_possible_moves(self) -> list:
         """
         Generates all basic moves for the current player without worrying about the King's safety.
@@ -398,3 +359,77 @@ class GameState:
                 return True # An enemy can attack this square!
                 
         return False # The square is safe
+
+    def _update_castle_rights(self, piece_moved: Piece, piece_captured: Optional[Piece], start_col: int, end_col: int) -> None:
+        """
+        Updates the castling rights boolean values based on moves and captures.
+        Rights are lost if the King moves, a Rook moves, or a Rook is captured.
+        """
+        if str(piece_moved) == 'wK':
+            self.current_castling_right.wks = False
+            self.current_castling_right.wqs = False
+        elif str(piece_moved) == 'bK':
+            self.current_castling_right.bks = False
+            self.current_castling_right.bqs = False
+            
+        elif str(piece_moved) == 'wR':
+            if start_col == 0:
+                self.current_castling_right.wqs = False
+            elif start_col == 7:
+                self.current_castling_right.wks = False
+        elif str(piece_moved) == 'bR':
+            if start_col == 0:
+                self.current_castling_right.bqs = False
+            elif start_col == 7:
+                self.current_castling_right.bks = False
+
+        if piece_captured is not None:
+            if str(piece_captured) == 'wR':
+                if end_col == 0:
+                    self.current_castling_right.wqs = False
+                elif end_col == 7:
+                    self.current_castling_right.wks = False
+            elif str(piece_captured) == 'bR':
+                if end_col == 0:
+                    self.current_castling_right.bqs = False
+                elif end_col == 7:
+                    self.current_castling_right.bks = False
+
+    def _get_castle_moves(self, row: int, col: int, valid_moves: list, color: str) -> None:
+        """
+        Checks if castling is legally possible right now, and if so, adds the 2-square jumps to 'valid_moves'.
+        Checks for empty squares and ensures the King does not jump through or into check.
+        """
+        if (color == 'w' and self.current_castling_right.wks) or (color == 'b' and self.current_castling_right.bks):
+            if self.board[row][col + 1] is None and self.board[row][col + 2] is None:
+                if not self.square_under_attack(row, col + 1) and not self.square_under_attack(row, col + 2):
+                    valid_moves.append((row, col + 2))
+                    
+        if (color == 'w' and self.current_castling_right.wqs) or (color == 'b' and self.current_castling_right.bqs):
+            if self.board[row][col - 1] is None and self.board[row][col - 2] is None and self.board[row][col - 3] is None:
+                if not self.square_under_attack(row, col - 1) and not self.square_under_attack(row, col - 2):
+                    valid_moves.append((row, col - 2))
+
+    def _setup_board(self) -> List[List[Optional[Piece]]]:
+        """
+        Initializes the board with Piece objects in their starting positions.
+        """
+        # Create an empty 8x8 matrix filled with 'None'
+        board: List[List[Optional[Piece]]] = [[None for _ in range(8)] for _ in range(8)]
+        
+        # Place Pawns on the 2nd row (index 1 for black) and 7th row (index 6 for white)
+        for col in range(8):
+            board[1][col] = Pawn('b', 1, col)
+            board[6][col] = Pawn('w', 6, col)
+
+        # Place the main pieces dynamically using a list of classes
+        piece_order = [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook]
+        for col in range(8):
+            piece_class = piece_order[col]
+            board[0][col] = piece_class('b', 0, col)
+            board[7][col] = piece_class('w', 7, col)
+
+        return board
+
+
+        

@@ -105,6 +105,7 @@ class InputHandler:
                 else:
                     # It's a normal move. Tell the engine to update the board.
                     gs.make_move(start_pos, end_pos)
+                    gs.update_game_status()
                     self.reset_clicks()
             else:
                 # The player clicked an invalid destination square. Cancel the whole process.
