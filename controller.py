@@ -4,40 +4,34 @@ from engine import GameState
 
 class InputHandler:
     """
-    This class acts as the 'Controller' in our MVC architecture.
-    It listens to the player's mouse clicks, remembers what they selected, 
-    and tells the GameState (Engine) what moves to make.
+    controller for MVC architecture
+    listens to mouse clicks and tells the engine what to do
     """
     def __init__(self):
-        # Stores the (row, column) of the square the player just clicked.
-        # Example: (4, 3). Empty tuple () means nothing is selected.
+        # stores row and col of clicked square
         self.sq_selected = ()
         
-        # Keeps a history of the player's clicks for the current turn.
-        # 0 items: Waiting for the player to pick a piece.
-        # 1 item: Piece picked, waiting for the destination square.
-        # 2 items: Destination picked, time to attempt the move.
+        # history of clicks for current turn
         self.player_clicks = []
         
-        # When a piece is clicked, we ask the engine for its legal moves and store them here.
-        # We use this to draw green dots and to verify the second click.
+        # valid moves for the clicked piece
+        # used to draw green dots and verify second click
         self.valid_moves = []
 
-        # --- PAWN PROMOTION STATE ---
-        # A switch (True/False) that pauses the normal game to show the piece selection menu.
+        # pauses normal game to show promotion menu
         self.is_promoting = False
         
-        # Remembers the start and end squares of the pawn that is being promoted.
-        # We need this because we have to wait for the player's menu choice before finishing the move.
+        # remembers start and end squares for promotion
+        # waits for menu choice before finishing move
         self.promotion_move = None
 
     def handle_mouse_click(self, location: tuple, gs: GameState, flipped: bool = False) -> None:
         """
-        Triggered every time the left mouse button is pressed.
-        'location' is the exact (x, y) pixel coordinate of the mouse on the screen.
+        triggered on mouse click
+        location is the x and y pixel coordinate
         """
-        # 1. --- PROMOTION MENU LOGIC ---
-        # If the menu is currently open, we completely ignore the chess board.
+        # promotion menu logic
+        # ignore board if menu is open
         if self.is_promoting:
             menu_width = 4 * c.SQ_SIZE
             start_x = (c.WIDTH - menu_width) // 2
@@ -45,77 +39,76 @@ class InputHandler:
             
             mouse_x, mouse_y = location
             
-            # Check if the player clicked inside our popup menu box
+            # check if clicked inside popup menu
             if start_y <= mouse_y <= start_y + c.SQ_SIZE and start_x <= mouse_x <= start_x + menu_width:
-                # Math trick: divide the x position to figure out which of the 4 icons they clicked
+                # divide x position to find out which icon was clicked
                 index = (mouse_x - start_x) // c.SQ_SIZE
                 choices = ['Q', 'R', 'B', 'N']
                 choice = choices[index]
                 
-                # Tell the engine to finish the saved move and spawn the new chosen piece
+                # finish move and spawn new piece
                 gs.make_move(self.promotion_move[0], self.promotion_move[1], promotion_choice=choice)
                 
-                # Close the menu and go back to normal gameplay
+                # close menu and resume game
                 self.reset_clicks()
             
-            # If they clicked outside the menu, just do nothing and wait for a valid click
+            # do nothing if clicked outside menu
             return 
 
-        # 2. --- NORMAL BOARD LOGIC ---
-        # Convert the pixel coordinates into grid coordinates (0 to 7)
+        # normal board logic
+        # convert pixels to grid coordinates
         col = location[0] // c.SQ_SIZE
         row = location[1] // c.SQ_SIZE
         
-        # If the view is flipped, the logical row/col is (7 - screen_row/col)
+        # adjust coords if board is flipped
         if flipped:
             row = 7 - row
             col = 7 - col
             
-        # If the player clicks the exact same square twice, they probably want to deselect their piece
+        # deselect piece if clicked twice
         if self.sq_selected == (row, col):
             self.reset_clicks()
         else:
-            # Save the new click and add it to our history
+            # save click to history
             self.sq_selected = (row, col)
             self.player_clicks.append(self.sq_selected)
             
-            # --- FIRST CLICK (Selecting a piece) ---
+            # first click (selecting a piece)
             if len(self.player_clicks) == 1:
-                # Ask the engine: "Where can this specific piece go safely?"
+                # get valid moves from engine
                 self.valid_moves = gs.get_valid_moves_for_piece(row, col)
                 
-                # If they clicked an empty square or a piece with no legal moves, cancel the selection
+                # cancel if empty square or no moves
                 if not self.valid_moves:
                     self.reset_clicks()
         
-        # --- SECOND CLICK (Choosing the destination) ---
+        # second click (choosing destination)
         if len(self.player_clicks) == 2:
             start_pos = self.player_clicks[0]
             end_pos = self.player_clicks[1]
             
-            # Check if the chosen destination is actually a legal move for this piece
+            # check if destination is a valid move
             if end_pos in self.valid_moves:
                 piece_to_move = gs.board[start_pos[0]][start_pos[1]]
                 
-                # Check if it's a Pawn ('P') that just reached the top (row 0) or bottom (row 7) edge
+                # check for pawn promotion
                 if str(piece_to_move)[1] == 'P' and (end_pos[0] == 0 or end_pos[0] == 7):
-                    # Freeze the board interactions and prepare to show the promotion menu
+                    # show promotion menu
                     self.is_promoting = True
                     self.promotion_move = (start_pos, end_pos)
                 else:
-                    # It's a normal move. Tell the engine to update the board.
+                    # normal move, update board
                     gs.make_move(start_pos, end_pos)
                     gs.update_game_status()
                     self.reset_clicks()
             else:
-                # The player clicked an invalid destination square. Cancel the whole process.
+                # cancel if invalid destination
                 self.reset_clicks()
 
     def reset_clicks(self) -> None:
         """
-        Clears all temporary data. 
-        We call this when a move is successfully made, when a move is cancelled, 
-        or when the player undoes a move ('Z' key).
+        clears all temporary data
+        used after move is made, cancelled or undone
         """
         self.sq_selected = ()
         self.player_clicks = []
